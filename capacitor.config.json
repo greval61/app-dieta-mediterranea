@@ -1,0 +1,17 @@
+{
+  "appId": "com.appdieta.mediterranea",
+  "appName": "APP-Dieta",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "buildOptions": {
+      "keystorePath": "",
+      "keystoreAlias": "",
+      "keystoreAliasPassword": "",
+      "keystorePassword": "",
+      "releaseType": "APK"
+    }
+  }
+}

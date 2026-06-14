@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">APP-Dieta</string>
+    <string name="title_activity_main">APP-Dieta</string>
+    <string name="package_name">com.appdieta.mediterranea</string>
+    <string name="custom_url_scheme">com.appdieta.mediterranea</string>
+</resources>

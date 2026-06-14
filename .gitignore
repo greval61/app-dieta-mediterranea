@@ -1,0 +1,35 @@
+# Dependencies
+node_modules/
+
+# Production
+/dist
+/build
+
+# Android
+android/app/build/
+android/.gradle/
+android/local.properties
+android/.idea/
+
+# Database
+*.db
+server/db/dieta.db
+server/db/foods.json
+server/db/logs.json
+public/db/foods.json
+public/db/logs.json
+
+# Archives
+dist.rar
+*.rar
+
+# IDE
+.vscode/
+.idea/
+.zed/
+
+# Logs
+android/build_log.txt
+
+# Temp
+fix_pdf.py
