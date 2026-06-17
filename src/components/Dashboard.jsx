@@ -26,6 +26,11 @@ const Dashboard = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [showAddFoodModal, setShowAddFoodModal] = useState(false);
   const [showGoalsModal, setShowGoalsModal] = useState(false);
+  
+  // Estados para editar cantidad de alimentos
+  const [editingItem, setEditingItem] = useState(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [showEditModal, setShowEditModal] = useState(false);
 
   const defaultGoals = {
     calories: 2000,
@@ -665,9 +670,14 @@ const Dashboard = () => {
                           </div>
                           <div className="flex items-center gap-3">
                             <span className="font-black text-med-slate text-sm">{item.calories.toFixed(0)} <span className="text-[8px] uppercase text-slate-400 font-bold">kcal</span></span>
-                            <button onClick={() => removeFoodFromMeal(item.id)} className="text-slate-300 hover:text-med-terracotta opacity-0 group-hover:opacity-100 transition-all">
-                              <Trash2 size={18} />
-                            </button>
+                            <div className="flex items-center gap-1">
+                              <button onClick={() => openEditModal(item)} className="text-slate-300 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all" title="Editar cantidad">
+                                ✏️
+                              </button>
+                              <button onClick={() => removeFoodFromMeal(item.id)} className="text-slate-300 hover:text-med-terracotta opacity-0 group-hover:opacity-100 transition-all">
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
                           </div>
                         </div>
                       </div>
