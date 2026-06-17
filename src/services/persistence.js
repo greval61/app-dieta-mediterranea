@@ -213,6 +213,42 @@ export const persistence = {
     return true;
   },
 
+  async updateLog(id, newAmount) {
+    try {
+      const allLogs = JSON.parse(localStorage.getItem(STORAGE_KEYS.LOGS) || '[]');
+      const logIndex = allLogs.findIndex(l => l.id == id);
+      
+      if (logIndex === -1) return false;
+      
+      const oldLog = allLogs[logIndex];
+      const foodCatalog = await this.getFoods();
+      const food = foodCatalog.find(f => f.id === oldLog.food_id);
+      
+      if (!food) return false;
+      
+      const isWeightBased = Number(food.is_weight_based) === 1;
+      const factor = isWeightBased ? (newAmount / 100) : newAmount;
+      
+      const updatedLog = {
+        ...oldLog,
+        amount: Number(newAmount),
+        calories: food.calories * factor,
+        protein: food.protein * factor,
+        carbs: food.carbs * factor,
+        fat: food.fat * factor,
+        sugar: food.sugar * factor
+      };
+      
+      allLogs[logIndex] = updatedLog;
+      localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(allLogs));
+      
+      return updatedLog;
+    } catch (e) {
+      console.error('Error updating log:', e);
+      return false;
+    }
+  },
+
   updateLocalLogsForDate(date, serverLogs) {
     const allLogs = JSON.parse(localStorage.getItem(STORAGE_KEYS.LOGS) || '[]');
     const otherDates = allLogs.filter(l => l.date !== date);
