@@ -25,6 +25,12 @@ const Calendar = () => {
   const [isSaving, setIsSaving] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showCreateFoodModal, setShowCreateFoodModal] = useState(false);
+  
+  // Estados para editar cantidad de alimentos
+  const [editingItem, setEditingItem] = useState(null);
+  const [editAmount, setEditAmount] = useState('');
+  const [showEditModal, setShowEditModal] = useState(false);
+  
   const [goals, setGoals] = useState(() => persistence.getGoals());
   const [history, setHistory] = useState([]);
   const [historyLoading, setHistoryLoading] = useState(false);
@@ -262,6 +268,30 @@ const Calendar = () => {
       console.error('Error removing food:', error);
       setApiError('No se pudo eliminar el alimento.');
     }
+  };
+
+  const updateFoodAmount = async (item) => {
+    try {
+      const updatedLog = await persistence.updateLog(item.id, editAmount);
+      if (updatedLog) {
+        await fetchLogs();
+        await fetchHistory();
+        setShowEditModal(false);
+        setEditingItem(null);
+        setEditAmount('');
+      } else {
+        setApiError('No se pudo actualizar la cantidad del alimento.');
+      }
+    } catch (error) {
+      console.error('Error updating food amount:', error);
+      setApiError('No se pudo actualizar la cantidad del alimento.');
+    }
+  };
+
+  const openEditModal = (item) => {
+    setEditingItem(item);
+    setEditAmount(item.amount.toString());
+    setShowEditModal(true);
   };
 
   const handleFoodCreated = async (newFood) => {
@@ -1197,13 +1227,22 @@ const Calendar = () => {
                             </div>
                             <div className="flex items-center gap-3">
                               <span className="text-base font-black text-med-slate">{item.calories.toFixed(0)} kcal</span>
-                              <button 
-                                onClick={() => removeFoodFromMeal(item.id)}
-                                className="text-slate-300 hover:text-red-500 transition-colors"
-                                title="Eliminar"
-                              >
-                                <Trash2 size={14} />
-                              </button>
+                              <div className="flex items-center gap-1">
+                                <button 
+                                  onClick={() => openEditModal(item)}
+                                  className="text-slate-300 hover:text-blue-500 transition-colors"
+                                  title="Editar cantidad"
+                                >
+                                  ✏️
+                                </button>
+                                <button 
+                                  onClick={() => removeFoodFromMeal(item.id)}
+                                  className="text-slate-300 hover:text-red-500 transition-colors"
+                                  title="Eliminar"
+                                >
+                                  <Trash2 size={14} />
+                                </button>
+                              </div>
                             </div>
                           </div>
                           <div className="grid grid-cols-4 gap-2 text-xs">
