@@ -37,6 +37,7 @@ const Dashboard = () => {
     protein: 150,
     carbs: 200,
     fat: 70,
+    sugar: 20,
     profile: {
       weight: 70,
       age: 30,
@@ -82,25 +83,47 @@ const Dashboard = () => {
   };
 
   const calculateGoalsFromProfile = (profile) => {
-    const weight = Number(profile.weight) || 0;
     const bmr = calculateBMR(profile);
     const activity = activityFactors[profile.activity] || activityFactors.moderate;
     const adjustment = objectiveAdjustments[profile.objective] ?? 0;
     const tdee = Math.max(1200, Math.round(bmr * activity + adjustment));
-    const proteinMultiplier = profile.objective === 'lose'
-      ? 2.0
-      : profile.objective === 'gain'
-      ? 2.2
-      : 1.8;
-    const protein = Math.max(0, Math.round((proteinMultiplier * weight) * 10) / 10);
-    const fat = Math.max(0, Math.round(((tdee * 0.25) / 9) * 10) / 10);
-    const carbs = Math.max(0, Math.round(((tdee - protein * 4 - fat * 9) / 4) * 10) / 10);
+    
+    // Distribución porcentual de macronutrientes según objetivo
+    let proteinPercent, carbsPercent, fatPercent;
+    
+    switch (profile.objective) {
+      case 'lose':
+        // Perder peso: 40% HC, 30% Proteínas, 30% Grasas
+        carbsPercent = 0.40;
+        proteinPercent = 0.30;
+        fatPercent = 0.30;
+        break;
+      case 'gain':
+        // Ganar músculo: 45% HC, 30% Proteínas, 25% Grasas
+        carbsPercent = 0.45;
+        proteinPercent = 0.30;
+        fatPercent = 0.25;
+        break;
+      default:
+        // Mantener peso: 45% HC, 25% Proteínas, 30% Grasas
+        carbsPercent = 0.45;
+        proteinPercent = 0.25;
+        fatPercent = 0.30;
+        break;
+    }
+    
+    // Conversión de porcentajes a gramos
+    const protein = Math.max(0, Math.round(((tdee * proteinPercent) / 4) * 10) / 10);
+    const carbs = Math.max(0, Math.round(((tdee * carbsPercent) / 4) * 10) / 10);
+    const fat = Math.max(0, Math.round(((tdee * fatPercent) / 9) * 10) / 10);
+    const sugar = Math.max(0, Math.round((carbs * 0.1) * 10) / 10); // 10% de HC según OMS
 
     return {
       calories: tdee,
       protein,
       carbs,
       fat,
+      sugar,
     };
   };
 
