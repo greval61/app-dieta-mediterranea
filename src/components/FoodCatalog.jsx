@@ -163,6 +163,9 @@ const FoodCatalog = () => {
                         {food.calories} kcal · P {food.protein}g · H {food.carbs}g · G {food.fat}g
                         {' · '}
                         {Number(food.is_weight_based) === 1 ? 'por 100g' : 'por unidad'}
+                        {Array.isArray(food.recipe_ingredients) && food.recipe_ingredients.length > 0
+                          ? ` · ${food.recipe_ingredients.length} ingredientes`
+                          : ''}
                       </p>
                     </button>
                     <div className="flex items-center gap-1 shrink-0">

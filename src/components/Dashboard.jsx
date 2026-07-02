@@ -12,6 +12,44 @@ const getLocalDateStr = () => {
   return `${y}-${m}-${d}`;
 };
 
+const nutrientKeys = ['calories', 'protein', 'carbs', 'fat', 'sugar'];
+
+const scaleRecipeIngredients = (ingredients, factor) => {
+  if (!Array.isArray(ingredients)) return [];
+  return ingredients.map((ingredient) => ({
+    ...ingredient,
+    amount: (Number(ingredient.amount) || 0) * factor,
+    totals: nutrientKeys.reduce((acc, key) => {
+      const baseValue = ingredient.totals?.[key] ?? 0;
+      acc[key] = (Number(baseValue) || 0) * factor;
+      return acc;
+    }, {}),
+  }));
+};
+
+const isWeightBasedFood = (food) => Number(food?.is_weight_based) === 1;
+const defaultAmountForFood = (food) => (isWeightBasedFood(food) ? '100' : '1');
+const getRecipeWeight = (food) => {
+  if (!Array.isArray(food?.recipe_ingredients)) return 0;
+  return food.recipe_ingredients.reduce((total, ingredient) => (
+    Number(ingredient.is_weight_based) === 1 ? total + (Number(ingredient.amount) || 0) : total
+  ), 0);
+};
+const getFoodFactor = (food, amount) => {
+  const parsedAmount = Number(amount) || 0;
+  if (!isWeightBasedFood(food)) return parsedAmount;
+
+  const recipeWeight = getRecipeWeight(food);
+  const referenceWeight = recipeWeight > 0 ? recipeWeight : 100;
+  return parsedAmount / referenceWeight;
+};
+
+const macroDistributions = {
+  lose: { carbs: 40, protein: 30, fat: 30 },
+  maintain: { carbs: 45, protein: 25, fat: 30 },
+  gain: { carbs: 45, protein: 30, fat: 25 },
+};
+
 const Dashboard = () => {
   const [dailyLog, setDailyLog] = useState({
     breakfast: [], lunch: [], snack: [], dinner: [],
@@ -44,7 +82,13 @@ const Dashboard = () => {
       sex: 'female',
       height: 165,
       activity: 'moderate',
-      objective: 'maintain'
+      objective: 'maintain',
+      customMacros: {
+        calories: '',
+        carbs: '',
+        protein: '',
+        fat: '',
+      },
     }
   };
 
@@ -55,7 +99,11 @@ const Dashboard = () => {
       ...stored,
       profile: {
         ...defaultGoals.profile,
-        ...(stored.profile || {})
+        ...(stored.profile || {}),
+        customMacros: {
+          ...defaultGoals.profile.customMacros,
+          ...(stored.profile?.customMacros || {}),
+        },
       }
     };
   });
@@ -72,6 +120,60 @@ const Dashboard = () => {
     lose: -400,
     maintain: 0,
     gain: 250,
+    custom: 0,
+  };
+
+  const macroInputLabels = {
+    calories: 'Kilocalorías',
+    carbs: 'Hidratos de carbono',
+    protein: 'Proteínas',
+    fat: 'Grasas',
+  };
+
+  const handleCustomMacroChange = (key, value) => {
+    const sanitizedValue = value.replace(',', '.');
+    const pattern = key === 'calories' ? /^\d{0,5}(\.\d{0,1})?$/ : /^\d{0,3}(\.\d{0,2})?$/;
+    if (sanitizedValue !== '' && !pattern.test(sanitizedValue)) return;
+
+    setApiError(null);
+    setGoals({
+      ...goals,
+      profile: {
+        ...goals.profile,
+        customMacros: {
+          ...(goals.profile.customMacros || {}),
+          [key]: sanitizedValue,
+        },
+      },
+    });
+  };
+
+  const validateCustomMacros = () => {
+    if (goals.profile.objective !== 'custom') return true;
+
+    const customMacros = goals.profile.customMacros || {};
+    const missingFields = Object.entries(macroInputLabels)
+      .filter(([key]) => customMacros[key] === '' || customMacros[key] === undefined || customMacros[key] === null)
+      .map(([, label]) => label);
+
+    if (missingFields.length > 0) {
+      setApiError(`Completa las kilocalorías y los tres porcentajes personalizados antes de guardar: ${missingFields.join(', ')}.`);
+      return false;
+    }
+
+    const invalidFields = Object.entries(macroInputLabels)
+      .filter(([key]) => {
+        const value = Number(customMacros[key]);
+        return Number.isNaN(value) || value <= 0;
+      })
+      .map(([, label]) => label);
+
+    if (invalidFields.length > 0) {
+      setApiError(`Introduce números válidos en: ${invalidFields.join(', ')}.`);
+      return false;
+    }
+
+    return true;
   };
 
   const calculateBMR = ({ weight, height, age, sex }) => {
@@ -86,31 +188,22 @@ const Dashboard = () => {
     const bmr = calculateBMR(profile);
     const activity = activityFactors[profile.activity] || activityFactors.moderate;
     const adjustment = objectiveAdjustments[profile.objective] ?? 0;
-    const tdee = Math.max(1200, Math.round(bmr * activity + adjustment));
+    const calculatedTdee = Math.max(1200, Math.round(bmr * activity + adjustment));
+    const tdee = profile.objective === 'custom'
+      ? Math.round(Number(profile.customMacros?.calories) || 0)
+      : calculatedTdee;
     
-    // Distribución porcentual de macronutrientes según objetivo
-    let proteinPercent, carbsPercent, fatPercent;
-    
-    switch (profile.objective) {
-      case 'lose':
-        // Perder peso: 40% HC, 30% Proteínas, 30% Grasas
-        carbsPercent = 0.40;
-        proteinPercent = 0.30;
-        fatPercent = 0.30;
-        break;
-      case 'gain':
-        // Ganar músculo: 45% HC, 30% Proteínas, 25% Grasas
-        carbsPercent = 0.45;
-        proteinPercent = 0.30;
-        fatPercent = 0.25;
-        break;
-      default:
-        // Mantener peso: 45% HC, 25% Proteínas, 30% Grasas
-        carbsPercent = 0.45;
-        proteinPercent = 0.25;
-        fatPercent = 0.30;
-        break;
-    }
+    const distribution = profile.objective === 'custom'
+      ? {
+          carbs: Number(profile.customMacros?.carbs) || 0,
+          protein: Number(profile.customMacros?.protein) || 0,
+          fat: Number(profile.customMacros?.fat) || 0,
+        }
+      : macroDistributions[profile.objective] || macroDistributions.maintain;
+
+    const carbsPercent = distribution.carbs / 100;
+    const proteinPercent = distribution.protein / 100;
+    const fatPercent = distribution.fat / 100;
     
     // Conversión de porcentajes a gramos
     const protein = Math.max(0, Math.round(((tdee * proteinPercent) / 4) * 10) / 10);
@@ -184,8 +277,8 @@ const Dashboard = () => {
       return;
     }
 
-    const isWeightBased = Number(selectedFood.is_weight_based) === 1;
-    const factor = isWeightBased ? (parsedAmount / 100) : parsedAmount;
+    const isWeightBased = isWeightBasedFood(selectedFood);
+    const factor = getFoodFactor(selectedFood, parsedAmount);
 
     setIsSaving(true);
     setApiError(null);
@@ -201,7 +294,8 @@ const Dashboard = () => {
         carbs: selectedFood.carbs * factor,
         fat: selectedFood.fat * factor,
         sugar: selectedFood.sugar * factor,
-        unit_label: isWeightBased ? 'g' : 'unid.'
+        unit_label: isWeightBased ? 'g' : 'unid.',
+        recipe_ingredients: scaleRecipeIngredients(selectedFood.recipe_ingredients, factor)
       });
 
       await fetchLogs();
@@ -224,6 +318,7 @@ const Dashboard = () => {
   const handleFoodCreated = async (newFood) => {
     await fetchCatalog('');
     setSelectedFood(newFood);
+    setAmount(defaultAmountForFood(newFood));
     setSearchTerm('');
     setApiError(null);
   };
@@ -238,13 +333,20 @@ const Dashboard = () => {
   };
 
   const updateFoodAmount = async (item) => {
+    const newAmountValue = Number(editAmount);
+    if (!newAmountValue || newAmountValue <= 0) {
+      setApiError('Introduce una cantidad válida (mayor que 0).');
+      return;
+    }
+
     try {
-      const updatedLog = await persistence.updateLog(item.id, editAmount);
+      const updatedLog = await persistence.updateLog(item.id, editAmount, item);
       if (updatedLog) {
-        fetchLogs();
+        await fetchLogs();
         setShowEditModal(false);
         setEditingItem(null);
         setEditAmount('');
+        setApiError(null);
       } else {
         setApiError('No se pudo actualizar la cantidad del alimento.');
       }
@@ -401,7 +503,10 @@ const Dashboard = () => {
                 </div>
               </div>
               <button
-                onClick={() => setShowGoalsModal(false)}
+                onClick={() => {
+                  setShowGoalsModal(false);
+                  setApiError(null);
+                }}
                 className="text-slate-400 hover:text-med-terracotta text-3xl leading-none"
                 aria-label="Cerrar modal"
               >
@@ -489,18 +594,74 @@ const Dashboard = () => {
                     <label className="text-[11px] font-black uppercase tracking-[0.3em] text-slate-400 mb-2 block">Objetivo</label>
                     <select
                       value={goals.profile.objective}
-                      onChange={(e) => setGoals({
-                        ...goals,
-                        profile: { ...goals.profile, objective: e.target.value }
-                      })}
+                      onChange={(e) => {
+                        setApiError(null);
+                        setGoals({
+                          ...goals,
+                          profile: { ...goals.profile, objective: e.target.value }
+                        });
+                      }}
                       className="w-full rounded-3xl border border-slate-200 bg-slate-50 px-4 py-3 text-base font-bold text-med-slate outline-none transition focus:border-med-olive focus:bg-white"
                     >
                       <option value="lose">Perder peso</option>
                       <option value="maintain">Mantener peso</option>
                       <option value="gain">Ganar músculo</option>
+                      <option value="custom">Personalizado</option>
                     </select>
                   </div>
                 </div>
+
+                {goals.profile.objective === 'custom' && (
+                  <div className="rounded-[2rem] border border-med-olive/20 bg-med-olive/5 p-5 space-y-4">
+                    <div>
+                      <p className="text-[11px] uppercase tracking-[0.3em] text-med-olive font-black mb-2">Distribución de macros según objetivo</p>
+                      <p className="text-sm text-slate-500">Usa las referencias para definir tus kilocalorías y el reparto personalizado. Solo cambia las casillas editables.</p>
+                    </div>
+                    <div className="space-y-3 text-sm text-slate-600">
+                      <div className="rounded-3xl bg-white p-4 border border-slate-100">
+                        <p className="font-black text-med-slate mb-2">Perder peso <span className="font-medium text-slate-400">(pérdida de grasa con actividad moderada)</span></p>
+                        <p>Kilocalorías: <strong>TDEE - 400 kcal</strong></p>
+                        <p>Hidratos de carbono: <strong>40%</strong> del TDEE</p>
+                        <p>Proteínas: <strong>30%</strong> del TDEE</p>
+                        <p>Grasas: <strong>30%</strong> del TDEE</p>
+                      </div>
+                      <div className="rounded-3xl bg-white p-4 border border-slate-100">
+                        <p className="font-black text-med-slate mb-2">Mantener peso <span className="font-medium text-slate-400">(equilibrio saludable)</span></p>
+                        <p>Kilocalorías: <strong>TDEE</strong></p>
+                        <p>Hidratos de carbono: <strong>45%</strong> del TDEE</p>
+                        <p>Proteínas: <strong>25%</strong> del TDEE</p>
+                        <p>Grasas: <strong>30%</strong> del TDEE</p>
+                      </div>
+                      <div className="rounded-3xl bg-white p-4 border border-slate-100">
+                        <p className="font-black text-med-slate mb-2">Ganar músculo <span className="font-medium text-slate-400">(hipertrofia)</span></p>
+                        <p>Kilocalorías: <strong>TDEE + 250 kcal</strong></p>
+                        <p>Hidratos de carbono: <strong>45%</strong> del TDEE</p>
+                        <p>Proteínas: <strong>30%</strong> del TDEE</p>
+                        <p>Grasas: <strong>25%</strong> del TDEE</p>
+                      </div>
+                      <div className="rounded-3xl bg-white p-4 border-2 border-med-olive/20">
+                        <p className="font-black text-med-slate mb-3">Personalizado</p>
+                        <div className="space-y-3">
+                          {Object.entries(macroInputLabels).map(([key, label]) => (
+                            <label key={key} className="grid grid-cols-[1fr_92px_auto] items-center gap-2">
+                              <span>{label}:</span>
+                              <input
+                                type="number"
+                                min="0"
+                                step="0.1"
+                                placeholder="??"
+                                value={goals.profile.customMacros?.[key] ?? ''}
+                                onChange={(e) => handleCustomMacroChange(key, e.target.value)}
+                                className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-2 text-center font-black text-med-slate outline-none transition focus:border-med-olive focus:bg-white"
+                              />
+                              <span>{key === 'calories' ? 'kcal' : 'del total'}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
                 <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-4">
                   <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500 font-bold mb-3">Visualización instantánea</p>
@@ -534,7 +695,7 @@ const Dashboard = () => {
                 <div className="rounded-[2rem] border border-slate-200 bg-slate-50 p-5 space-y-3">
                   <div className="flex items-center justify-between text-slate-500 text-[11px] uppercase tracking-[0.28em] font-bold">
                     <span>Objetivo</span>
-                    <span>{goals.profile.objective === 'lose' ? 'Déficit' : goals.profile.objective === 'gain' ? 'Superávit' : 'Estable'}</span>
+                    <span>{goals.profile.objective === 'lose' ? 'Déficit' : goals.profile.objective === 'gain' ? 'Superávit' : goals.profile.objective === 'custom' ? 'Personal' : 'Estable'}</span>
                   </div>
                   <div className="flex items-center justify-between text-slate-500 text-[11px] uppercase tracking-[0.28em] font-bold">
                     <span>Factor de actividad</span>
@@ -570,8 +731,15 @@ const Dashboard = () => {
               </div>
             </div>
 
+            {apiError && (
+              <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-bold text-red-700">
+                {apiError}
+              </div>
+            )}
+
             <button 
               onClick={() => {
+                if (!validateCustomMacros()) return;
                 const saved = {
                   ...goals,
                   ...computedGoals,
@@ -595,10 +763,16 @@ const Dashboard = () => {
           <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4">
             <div className="flex justify-between items-center">
               <h3 className="text-xl font-bold text-med-slate">Editar cantidad</h3>
-              <button onClick={() => setShowEditModal(false)} className="text-slate-400 hover:text-red-500">
+              <button onClick={() => { setShowEditModal(false); setApiError(null); }} className="text-slate-400 hover:text-red-500">
                 ×
               </button>
             </div>
+
+            {apiError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                {apiError}
+              </div>
+            )}
 
             <div className="bg-med-offwhite p-4 rounded-2xl">
               <p className="text-xs font-bold text-slate-400 uppercase mb-1">Alimento</p>
@@ -755,6 +929,15 @@ const Dashboard = () => {
                           <div>
                             <p className="font-bold text-med-slate">{item.name}</p>
                             <p className="text-xs text-slate-400">{item.amount}{item.unit_label || item.unit || ''}</p>
+                            {Array.isArray(item.recipe_ingredients) && item.recipe_ingredients.length > 0 && (
+                              <div className="mt-2 flex flex-wrap gap-1.5">
+                                {item.recipe_ingredients.map((ingredient, index) => (
+                                  <span key={`${ingredient.food_id || ingredient.name}-${index}`} className="rounded-full bg-white px-2 py-1 text-[10px] font-bold text-slate-500 border border-slate-100">
+                                    {ingredient.name} {Number(ingredient.amount).toFixed(Number(ingredient.amount) % 1 === 0 ? 0 : 1)}{ingredient.unit_label || ''}
+                                  </span>
+                                ))}
+                              </div>
+                            )}
                           </div>
                         </div>
                         
@@ -767,10 +950,10 @@ const Dashboard = () => {
                           <div className="flex items-center gap-3">
                             <span className="font-black text-med-slate text-sm">{item.calories.toFixed(0)} <span className="text-[8px] uppercase text-slate-400 font-bold">kcal</span></span>
                             <div className="flex items-center gap-1">
-                              <button onClick={() => openEditModal(item)} className="text-slate-300 hover:text-blue-500 opacity-0 group-hover:opacity-100 transition-all" title="Editar cantidad">
+                              <button onClick={() => openEditModal(item)} className="text-slate-400 hover:text-blue-500 transition-all" title="Editar cantidad">
                                 ✏️
                               </button>
-                              <button onClick={() => removeFoodFromMeal(item.id)} className="text-slate-300 hover:text-med-terracotta opacity-0 group-hover:opacity-100 transition-all">
+                              <button onClick={() => removeFoodFromMeal(item.id)} className="text-slate-400 hover:text-med-terracotta transition-all">
                                 <Trash2 size={18} />
                               </button>
                             </div>
@@ -810,13 +993,14 @@ const Dashboard = () => {
                                     e.preventDefault();
                                     e.stopPropagation();
                                     setSelectedFood(food);
+                                    setAmount(defaultAmountForFood(food));
                                     setSearchTerm('');
                                   }}
                                   className="w-full flex justify-between items-center gap-4 px-5 py-4 hover:bg-med-olive/10 transition-colors border-b border-slate-100 last:border-0 text-left"
                                 >
                                   <div className="min-w-0 flex-1">
                                     <p className="font-bold text-base text-med-slate">{food.name}</p>
-                                    <p className="text-xs text-slate-500 font-medium mt-0.5">{food.category} · {food.calories} kcal / {Number(food.is_weight_based) === 1 ? '100g' : 'unidad'}</p>
+                                    <p className="text-xs text-slate-500 font-medium mt-0.5">{food.category} · {food.calories} kcal / {isWeightBasedFood(food) ? '100g' : 'unidad/ración'}</p>
                                   </div>
                                   <ChevronRight size={20} className="text-med-olive shrink-0" />
                                 </button>
@@ -852,7 +1036,7 @@ const Dashboard = () => {
                         <div className="bg-med-offwhite p-4 rounded-2xl flex flex-col sm:flex-row gap-4 items-center border border-med-olive/20">
                           <div className="flex-1 text-center sm:text-left">
                             <p className="font-bold text-med-olive">{selectedFood.name}</p>
-                            <p className="text-xs text-slate-500">Valores por {Number(selectedFood.is_weight_based) === 1 ? '100g' : 'unidad'}</p>
+                            <p className="text-xs text-slate-500">Valores por {isWeightBasedFood(selectedFood) ? '100g' : 'unidad/ración'}</p>
                           </div>
                           <div className="flex items-center gap-3">
                             <div className="relative w-32">
@@ -860,7 +1044,7 @@ const Dashboard = () => {
                               <input
                                 autoFocus
                                 type="number"
-                                placeholder={Number(selectedFood.is_weight_based) === 1 ? "Gramos" : "Unid."}
+                                placeholder={isWeightBasedFood(selectedFood) ? "Gramos" : "Raciones"}
                                 className="w-full pl-10 pr-4 py-2 bg-white border-2 border-med-olive/20 rounded-xl focus:border-med-olive outline-none transition-all text-sm font-bold"
                                 value={amount}
                                 onChange={(e) => setAmount(e.target.value)}

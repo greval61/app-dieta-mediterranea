@@ -10,8 +10,11 @@ CREATE TABLE IF NOT EXISTS foods (
     fat FLOAT DEFAULT 0,
     sugar FLOAT DEFAULT 0,
     category VARCHAR(100) DEFAULT 'Otros',
-    is_weight_based TINYINT(1) DEFAULT 1
+    is_weight_based TINYINT(1) DEFAULT 1,
+    recipe_ingredients TEXT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE foods ADD COLUMN IF NOT EXISTS recipe_ingredients TEXT NULL;
 
 -- Tabla de registros (Diario)
 CREATE TABLE IF NOT EXISTS logs (
@@ -26,7 +29,8 @@ CREATE TABLE IF NOT EXISTS logs (
     carbs FLOAT DEFAULT 0,
     fat FLOAT DEFAULT 0,
     sugar FLOAT DEFAULT 0,
-    unit_label VARCHAR(20) DEFAULT 'g'
+    unit_label VARCHAR(20) DEFAULT 'g',
+    recipe_ingredients TEXT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Tabla de usuarios
@@ -43,6 +47,8 @@ CREATE TABLE IF NOT EXISTS weight_logs (
     weight FLOAT NOT NULL,
     notes TEXT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+ALTER TABLE logs ADD COLUMN IF NOT EXISTS recipe_ingredients TEXT NULL;
 
 -- Insertar algunos alimentos iniciales
 INSERT IGNORE INTO foods (id, name, calories, protein, carbs, fat, sugar, category, is_weight_based) VALUES

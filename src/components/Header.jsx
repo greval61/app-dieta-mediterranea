@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
-import { Leaf, Cloud, CloudOff, Sun, Utensils, Coffee, Moon, Scale, LogOut } from 'lucide-react';
+import { Leaf, Cloud, CloudOff, BookOpen } from 'lucide-react';
 import { persistence } from '../services/persistence';
 
-const Header = ({ activeTab, setActiveTab }) => {
+const Header = ({ activeTab, setActiveTab, onOpenTutorial }) => {
   const [isOnline, setIsOnline] = useState(persistence.isOnline);
 
   useEffect(() => {
@@ -56,6 +56,15 @@ const Header = ({ activeTab, setActiveTab }) => {
                 {tab.label}
               </button>
             ))}
+            <button
+              type="button"
+              onClick={onOpenTutorial}
+              className="flex shrink-0 items-center gap-1.5 px-3 py-2 rounded-full text-sm font-bold text-med-olive hover:bg-med-olive/10 transition-all"
+              title="Abrir tutorial"
+            >
+              <BookOpen size={16} />
+              <span>Tutorial</span>
+            </button>
           </nav>
         </div>
       </div>

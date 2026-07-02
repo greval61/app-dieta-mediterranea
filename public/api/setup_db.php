@@ -10,7 +10,8 @@ CREATE TABLE IF NOT EXISTS foods (
     calories FLOAT DEFAULT 0, protein FLOAT DEFAULT 0,
     carbs FLOAT DEFAULT 0, fat FLOAT DEFAULT 0,
     sugar FLOAT DEFAULT 0, category VARCHAR(100) DEFAULT 'Otros',
-    is_weight_based TINYINT(1) DEFAULT 1
+    is_weight_based TINYINT(1) DEFAULT 1,
+    recipe_ingredients TEXT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS logs (
@@ -20,7 +21,8 @@ CREATE TABLE IF NOT EXISTS logs (
     amount FLOAT NOT NULL, calories FLOAT DEFAULT 0,
     protein FLOAT DEFAULT 0, carbs FLOAT DEFAULT 0,
     fat FLOAT DEFAULT 0, sugar FLOAT DEFAULT 0,
-    unit_label VARCHAR(20) DEFAULT 'g'
+    unit_label VARCHAR(20) DEFAULT 'g',
+    recipe_ingredients TEXT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS users (
@@ -39,6 +41,16 @@ CREATE TABLE IF NOT EXISTS weight_logs (
 
 try {
     $db->exec($sql);
+    try {
+        $db->exec("ALTER TABLE foods ADD COLUMN recipe_ingredients TEXT NULL");
+    } catch (PDOException $ignored) {
+        // La columna ya existe en bases actualizadas.
+    }
+    try {
+        $db->exec("ALTER TABLE logs ADD COLUMN recipe_ingredients TEXT NULL");
+    } catch (PDOException $ignored) {
+        // La columna ya existe en bases actualizadas.
+    }
     echo "<h1>Estructura de Base de Datos lista</h1>";
 } catch (PDOException $e) {
     die("Error creando tablas: " . $e->getMessage());

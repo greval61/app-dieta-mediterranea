@@ -57,11 +57,29 @@ function mergeWithInitial(stored) {
   return missing.length > 0 ? [...stored, ...missing] : stored;
 }
 
-function reloadFoods() {
-  foods = mergeWithInitial(loadJson(foodsPath, null));
+function normalizeRecipeIngredients(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
 }
 
-let foods = mergeWithInitial(loadJson(foodsPath, null));
+function normalizeFood(food) {
+  return {
+    ...food,
+    recipe_ingredients: normalizeRecipeIngredients(food.recipe_ingredients),
+  };
+}
+
+function reloadFoods() {
+  foods = mergeWithInitial(loadJson(foodsPath, null)).map(normalizeFood);
+}
+
+let foods = mergeWithInitial(loadJson(foodsPath, null)).map(normalizeFood);
 saveJson(foodsPath, foods);
 
 let logs = loadJson(logsPath, []);
@@ -99,7 +117,7 @@ function slugifyId(name) {
 }
 
 function buildFoodFields(body) {
-  const { name, calories, protein, carbs, fat, sugar, category, is_weight_based } = body;
+  const { name, calories, protein, carbs, fat, sugar, category, is_weight_based, recipe_ingredients } = body;
   if (!name?.trim()) return { error: 'El nombre es obligatorio' };
   return {
     name: name.trim(),
@@ -110,6 +128,7 @@ function buildFoodFields(body) {
     sugar: Number(sugar) || 0,
     category: category?.trim() || 'Otros',
     is_weight_based: Number(is_weight_based) === 0 ? 0 : 1,
+    recipe_ingredients: normalizeRecipeIngredients(recipe_ingredients),
   };
 }
 
@@ -196,7 +215,7 @@ app.get('/api/logs/:date', (req, res) => {
 });
 
 app.post('/api/logs', (req, res) => {
-  const { date, meal_id, food_id, name, amount, calories, protein, carbs, fat, sugar, unit_label } = req.body;
+  const { date, meal_id, food_id, name, amount, calories, protein, carbs, fat, sugar, unit_label, recipe_ingredients } = req.body;
 
   if (!date || !meal_id || !food_id || !name || amount == null) {
     return res.status(400).json({ error: 'Faltan datos obligatorios' });
@@ -215,12 +234,47 @@ app.post('/api/logs', (req, res) => {
     fat: Number(fat),
     sugar: Number(sugar),
     unit_label: unit_label || 'g',
+    recipe_ingredients: normalizeRecipeIngredients(recipe_ingredients),
   };
 
   logs.push(entry);
   saveJson(logsPath, logs);
   res.json({ id: entry.id });
 });
+
+function updateLogById(req, res) {
+  const id = Number(req.params.id);
+  const index = logs.findIndex((l) => l.id === id);
+  if (index < 0) return res.status(404).json({ error: 'Registro no encontrado' });
+
+  const { date, meal_id, food_id, name, amount, calories, protein, carbs, fat, sugar, unit_label, recipe_ingredients } = req.body;
+  if (!date || !meal_id || !food_id || !name || amount == null) {
+    return res.status(400).json({ error: 'Faltan datos obligatorios' });
+  }
+
+  const entry = {
+    ...logs[index],
+    date,
+    meal_id,
+    food_id,
+    name,
+    amount: Number(amount),
+    calories: Number(calories),
+    protein: Number(protein),
+    carbs: Number(carbs),
+    fat: Number(fat),
+    sugar: Number(sugar),
+    unit_label: unit_label || 'g',
+    recipe_ingredients: normalizeRecipeIngredients(recipe_ingredients),
+  };
+
+  logs[index] = entry;
+  saveJson(logsPath, logs);
+  res.json(entry);
+}
+
+app.put('/api/logs/:id', updateLogById);
+app.patch('/api/logs/:id', updateLogById);
 
 app.delete('/api/logs/:id', (req, res) => {
   const id = Number(req.params.id);
@@ -278,6 +332,6 @@ app.listen(PORT, () => {
   console.log(`Servidor en http://localhost:${PORT}`);
   console.log('API endpoints:');
   console.log('  - GET/POST/PUT/PATCH/DELETE /api/foods');
-  console.log('  - GET/POST/DELETE /api/logs');
+  console.log('  - GET/POST/PUT/PATCH/DELETE /api/logs');
   console.log('  - GET/POST/DELETE /api/weight');
 });

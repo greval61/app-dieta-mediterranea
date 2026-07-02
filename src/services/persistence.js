@@ -14,6 +14,60 @@ const STORAGE_KEYS = {
   WEIGHTS: 'dieta_weights',
 };
 
+const normalizeRecipeIngredients = (value) => {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string' || !value.trim()) return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch (e) {
+    return [];
+  }
+};
+
+const normalizeFood = (food) => ({
+  ...food,
+  recipe_ingredients: normalizeRecipeIngredients(food.recipe_ingredients),
+});
+
+const mergeServerAndLocalFoods = (serverFoods) => {
+  const normalizedServer = serverFoods.map(normalizeFood);
+  const local = localStorage.getItem(STORAGE_KEYS.FOODS);
+  if (!local) return normalizedServer;
+
+  const serverIds = new Set(normalizedServer.map((food) => String(food.id)));
+  try {
+    const localFoods = JSON.parse(local).map(normalizeFood);
+    const localOnly = localFoods.filter((food) => food.id && !serverIds.has(String(food.id)));
+    return [...normalizedServer, ...localOnly];
+  } catch (e) {
+    return normalizedServer;
+  }
+};
+
+const normalizeLog = (log) => ({
+  ...log,
+  recipe_ingredients: normalizeRecipeIngredients(log.recipe_ingredients),
+});
+
+const isWeightBasedFood = (food) => Number(food?.is_weight_based) === 1;
+
+const getRecipeWeight = (food) => {
+  const ingredients = normalizeRecipeIngredients(food?.recipe_ingredients);
+  return ingredients.reduce((total, ingredient) => (
+    Number(ingredient.is_weight_based) === 1 ? total + (Number(ingredient.amount) || 0) : total
+  ), 0);
+};
+
+const getFoodFactor = (food, amount) => {
+  const parsedAmount = Number(amount) || 0;
+  if (!isWeightBasedFood(food)) return parsedAmount;
+
+  const recipeWeight = getRecipeWeight(food);
+  const referenceWeight = recipeWeight > 0 ? recipeWeight : 100;
+  return parsedAmount / referenceWeight;
+};
+
 // Alimentos por defecto si no hay nada en el servidor ni en local
 const getDefaultFoods = () => {
   return foodDatabase.map(f => ({
@@ -24,6 +78,7 @@ const getDefaultFoods = () => {
     fat: f.fat || 0,
     sugar: f.sugar || 0,
     calories: f.calories || 0,
+    recipe_ingredients: normalizeRecipeIngredients(f.recipe_ingredients),
   }));
 };
 
@@ -57,8 +112,9 @@ export const persistence = {
         const data = await response.json();
         if (Array.isArray(data)) {
           this.isOnline = true;
-          if (!search) localStorage.setItem(STORAGE_KEYS.FOODS, JSON.stringify(data));
-          return data;
+          const normalized = mergeServerAndLocalFoods(data);
+          if (!search) localStorage.setItem(STORAGE_KEYS.FOODS, JSON.stringify(normalized));
+          return normalized;
         }
       }
     } catch (e) {
@@ -66,7 +122,7 @@ export const persistence = {
     }
 
     const local = localStorage.getItem(STORAGE_KEYS.FOODS);
-    let foods = local ? JSON.parse(local) : getDefaultFoods();
+    let foods = (local ? JSON.parse(local) : getDefaultFoods()).map(normalizeFood);
     
     if (search) {
       const q = search.toLowerCase();
@@ -93,14 +149,14 @@ export const persistence = {
         const saved = await response.json();
         this.isOnline = true;
         await this.getFoods(); 
-        return saved;
+        return normalizeFood(saved);
       }
     } catch (e) {
       this.isOnline = false;
     }
 
     const local = localStorage.getItem(STORAGE_KEYS.FOODS);
-    const foods = local ? JSON.parse(local) : getDefaultFoods();
+    const foods = (local ? JSON.parse(local) : getDefaultFoods()).map(normalizeFood);
     
     let updatedFood;
     if (food.id) {
@@ -153,8 +209,9 @@ export const persistence = {
         const data = await response.json();
         if (Array.isArray(data)) {
           this.isOnline = true;
-          this.updateLocalLogsForDate(date, data);
-          return data;
+          const normalized = data.map(normalizeLog);
+          this.updateLocalLogsForDate(date, normalized);
+          return normalized;
         }
       }
     } catch (e) {
@@ -162,7 +219,7 @@ export const persistence = {
     }
 
     const allLogs = JSON.parse(localStorage.getItem(STORAGE_KEYS.LOGS) || '[]');
-    return allLogs.filter(l => l.date === date);
+    return allLogs.filter(l => l.date === date).map(normalizeLog);
   },
 
   async saveLog(log) {
@@ -213,34 +270,96 @@ export const persistence = {
     return true;
   },
 
-  async updateLog(id, newAmount) {
+  async updateLog(id, newAmount, currentLog = null) {
     try {
       const allLogs = JSON.parse(localStorage.getItem(STORAGE_KEYS.LOGS) || '[]');
       const logIndex = allLogs.findIndex(l => l.id == id);
+      const oldLog = logIndex >= 0 ? allLogs[logIndex] : currentLog;
       
-      if (logIndex === -1) return false;
-      
-      const oldLog = allLogs[logIndex];
+      if (!oldLog) {
+        console.error('Log not found for update:', id);
+        return false;
+      }
+
       const foodCatalog = await this.getFoods();
       const food = foodCatalog.find(f => f.id === oldLog.food_id);
       
-      if (!food) return false;
+      if (!food) {
+        console.error('Food not found in catalog:', oldLog.food_id);
+        return false;
+      }
       
-      const isWeightBased = Number(food.is_weight_based) === 1;
-      const factor = isWeightBased ? (newAmount / 100) : newAmount;
+      const oldAmount = Number(oldLog.amount) || 0;
+      const newAmountNum = Number(newAmount) || 0;
+      
+      if (newAmountNum <= 0) {
+        console.error('Invalid new amount:', newAmount);
+        return false;
+      }
+      
+      // Calcular factor de cambio proporcional basado en la cantidad actual
+      let factor;
+      const currentIngredients = normalizeRecipeIngredients(oldLog.recipe_ingredients);
+      
+      if (currentIngredients.length > 0 && oldAmount > 0) {
+        // Para platos con ingredientes, usar el factor de cambio entre cantidad vieja y nueva
+        factor = newAmountNum / oldAmount;
+      } else if (isWeightBasedFood(food)) {
+        // Para alimentos basados en peso simples, usar la lógica de getFoodFactor
+        factor = getFoodFactor(food, newAmountNum);
+      } else {
+        // Para alimentos por unidades, el factor es simplemente la nueva cantidad
+        factor = newAmountNum;
+      }
       
       const updatedLog = {
         ...oldLog,
-        amount: Number(newAmount),
+        amount: newAmountNum,
         calories: food.calories * factor,
         protein: food.protein * factor,
         carbs: food.carbs * factor,
         fat: food.fat * factor,
-        sugar: food.sugar * factor
+        sugar: food.sugar * factor,
+        recipe_ingredients: currentIngredients.map((ingredient) => ({
+          ...ingredient,
+          amount: (Number(ingredient.amount) || 0) * factor,
+          totals: ingredient.totals ? {
+            calories: (Number(ingredient.totals.calories) || 0) * factor,
+            protein: (Number(ingredient.totals.protein) || 0) * factor,
+            carbs: (Number(ingredient.totals.carbs) || 0) * factor,
+            fat: (Number(ingredient.totals.fat) || 0) * factor,
+            sugar: (Number(ingredient.totals.sugar) || 0) * factor,
+          } : undefined,
+        })),
       };
-      
-      allLogs[logIndex] = updatedLog;
+
+      // Primero guardar en localStorage (siempre funciona en APK)
+      if (logIndex >= 0) {
+        allLogs[logIndex] = updatedLog;
+      } else {
+        allLogs.push(updatedLog);
+      }
       localStorage.setItem(STORAGE_KEYS.LOGS, JSON.stringify(allLogs));
+      
+      console.log('Log updated in localStorage:', updatedLog);
+      
+      // Intentar sincronizar con servidor si está disponible
+      try {
+        const response = await fetch(getApiUrl(`/logs/${id}`), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updatedLog),
+        });
+
+        if (response.ok) {
+          this.isOnline = true;
+          if (updatedLog.date) await this.getLogs(updatedLog.date);
+          return normalizeLog(updatedLog);
+        }
+      } catch (e) {
+        console.log('Server sync failed, using localStorage only');
+        this.isOnline = false;
+      }
       
       return updatedLog;
     } catch (e) {
@@ -280,7 +399,13 @@ export const persistence = {
         sex: 'female',
         height: 165,
         activity: 'moderate',
-        objective: 'maintain'
+        objective: 'maintain',
+        customMacros: {
+          calories: '',
+          carbs: '',
+          protein: '',
+          fat: '',
+        }
       }
     };
   },

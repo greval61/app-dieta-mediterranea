@@ -9,6 +9,43 @@ import { Filesystem, Directory } from '@capacitor/filesystem';
 import { Share } from '@capacitor/share';
 import { Capacitor } from '@capacitor/core';
 
+const nutrientKeys = ['calories', 'protein', 'carbs', 'fat', 'sugar'];
+
+const scaleRecipeIngredients = (ingredients, factor) => {
+  if (!Array.isArray(ingredients)) return [];
+  return ingredients.map((ingredient) => ({
+    ...ingredient,
+    amount: (Number(ingredient.amount) || 0) * factor,
+    totals: nutrientKeys.reduce((acc, key) => {
+      acc[key] = (Number(ingredient.totals?.[key]) || 0) * factor;
+      return acc;
+    }, {}),
+  }));
+};
+
+const isWeightBasedFood = (food) => Number(food?.is_weight_based) === 1;
+const defaultAmountForFood = (food) => (isWeightBasedFood(food) ? '100' : '1');
+const getRecipeWeight = (food) => {
+  if (!Array.isArray(food?.recipe_ingredients)) return 0;
+  return food.recipe_ingredients.reduce((total, ingredient) => (
+    Number(ingredient.is_weight_based) === 1 ? total + (Number(ingredient.amount) || 0) : total
+  ), 0);
+};
+const getFoodFactor = (food, amount) => {
+  const parsedAmount = Number(amount) || 0;
+  if (!isWeightBasedFood(food)) return parsedAmount;
+
+  const recipeWeight = getRecipeWeight(food);
+  const referenceWeight = recipeWeight > 0 ? recipeWeight : 100;
+  return parsedAmount / referenceWeight;
+};
+
+const macroDistributions = {
+  lose: { carbs: 40, protein: 30, fat: 30 },
+  maintain: { carbs: 45, protein: 25, fat: 30 },
+  gain: { carbs: 45, protein: 30, fat: 25 },
+};
+
 const Calendar = () => {
   const [currentDate, setCurrentDate] = useState(new Date());
   const [selectedDate, setSelectedDate] = useState(new Date());
@@ -21,7 +58,7 @@ const Calendar = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [foodCatalog, setFoodCatalog] = useState([]);
   const [selectedFood, setSelectedFood] = useState(null);
-  const [amount, setAmount] = useState('100');
+  const [amount, setAmount] = useState('');
   const [isSaving, setIsSaving] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [showCreateFoodModal, setShowCreateFoodModal] = useState(false);
@@ -51,6 +88,7 @@ const Calendar = () => {
       lose: -400,
       maintain: 0,
       gain: 250,
+      custom: 0,
     };
 
     const bmr = weight && height && age
@@ -59,31 +97,22 @@ const Calendar = () => {
 
     const activity = activityFactors[profile.activity] || activityFactors.moderate;
     const adjustment = objectiveAdjustments[profile.objective] || 0;
-    const tdee = Math.max(1200, Math.round(bmr * activity + adjustment));
+    const calculatedTdee = Math.max(1200, Math.round(bmr * activity + adjustment));
+    const tdee = profile.objective === 'custom'
+      ? Math.round(Number(profile.customMacros?.calories) || 0)
+      : calculatedTdee;
     
-    // Distribución porcentual de macronutrientes según objetivo
-    let proteinPercent, carbsPercent, fatPercent;
-    
-    switch (profile.objective) {
-      case 'lose':
-        // Perder peso: 40% HC, 30% Proteínas, 30% Grasas
-        carbsPercent = 0.40;
-        proteinPercent = 0.30;
-        fatPercent = 0.30;
-        break;
-      case 'gain':
-        // Ganar músculo: 45% HC, 30% Proteínas, 25% Grasas
-        carbsPercent = 0.45;
-        proteinPercent = 0.30;
-        fatPercent = 0.25;
-        break;
-      default:
-        // Mantener peso: 45% HC, 25% Proteínas, 30% Grasas
-        carbsPercent = 0.45;
-        proteinPercent = 0.25;
-        fatPercent = 0.30;
-        break;
-    }
+    const distribution = profile.objective === 'custom'
+      ? {
+          carbs: Number(profile.customMacros?.carbs) || 0,
+          protein: Number(profile.customMacros?.protein) || 0,
+          fat: Number(profile.customMacros?.fat) || 0,
+        }
+      : macroDistributions[profile.objective] || macroDistributions.maintain;
+
+    const carbsPercent = distribution.carbs / 100;
+    const proteinPercent = distribution.protein / 100;
+    const fatPercent = distribution.fat / 100;
     
     // Conversión de porcentajes a gramos
     const protein = Math.max(0, Math.round(((tdee * proteinPercent) / 4) * 10) / 10);
@@ -292,14 +321,21 @@ const Calendar = () => {
   };
 
   const updateFoodAmount = async (item) => {
+    const newAmountValue = Number(editAmount);
+    if (!newAmountValue || newAmountValue <= 0) {
+      setApiError('Introduce una cantidad válida (mayor que 0).');
+      return;
+    }
+
     try {
-      const updatedLog = await persistence.updateLog(item.id, editAmount);
+      const updatedLog = await persistence.updateLog(item.id, editAmount, item);
       if (updatedLog) {
         await fetchLogs();
         await fetchHistory();
         setShowEditModal(false);
         setEditingItem(null);
         setEditAmount('');
+        setApiError(null);
       } else {
         setApiError('No se pudo actualizar la cantidad del alimento.');
       }
@@ -320,10 +356,12 @@ const Calendar = () => {
       const data = await persistence.getFoods('');
       setFoodCatalog(data);
       setSelectedFood(newFood);
+      setAmount(defaultAmountForFood(newFood));
       setSearchTerm('');
     } catch (error) {
       console.error('Error loading foods after creation:', error);
       setSelectedFood(newFood);
+      setAmount(defaultAmountForFood(newFood));
     }
   };
 
@@ -334,8 +372,8 @@ const Calendar = () => {
     setIsSaving(true);
     const dateStr = formatDateStr(selectedDate);
     const parsedAmount = parseFloat(amount) || 0;
-    const isWeightBased = Number(selectedFood.is_weight_based) === 1;
-    const factor = isWeightBased ? parsedAmount / 100 : parsedAmount;
+    const isWeightBased = isWeightBasedFood(selectedFood);
+    const factor = getFoodFactor(selectedFood, parsedAmount);
 
     try {
       await persistence.saveLog({
@@ -349,7 +387,8 @@ const Calendar = () => {
         carbs: selectedFood.carbs * factor,
         fat: selectedFood.fat * factor,
         sugar: (selectedFood.sugar || 0) * factor,
-        unit_label: isWeightBased ? 'g' : 'unid.'
+        unit_label: isWeightBased ? 'g' : 'unid.',
+        recipe_ingredients: scaleRecipeIngredients(selectedFood.recipe_ingredients, factor)
       });
 
       await fetchLogs();
@@ -357,7 +396,7 @@ const Calendar = () => {
       setShowAddModal(false);
       setSelectedFood(null);
       setSearchTerm('');
-      setAmount('100');
+      setAmount('');
     } catch (error) {
       alert('Error al guardar: ' + error.message);
     } finally {
@@ -806,10 +845,16 @@ const Calendar = () => {
           <div className="bg-white rounded-3xl p-6 max-w-md w-full shadow-2xl space-y-4 relative">
             <div className="flex justify-between items-center">
               <h3 className="text-xl font-bold text-med-slate">Añadir a {mealNames[activeMeal]}</h3>
-              <button onClick={() => { setShowAddModal(false); setSelectedFood(null); setSearchTerm(''); }} className="text-slate-400 hover:text-red-500">
+              <button onClick={() => { setShowAddModal(false); setSelectedFood(null); setSearchTerm(''); setAmount(''); setApiError(null); }} className="text-slate-400 hover:text-red-500">
                 <X size={24} />
               </button>
             </div>
+
+            {apiError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                {apiError}
+              </div>
+            )}
 
             {!selectedFood ? (
               <div className="space-y-4">
@@ -829,12 +874,15 @@ const Calendar = () => {
                     <button
                       key={food.id}
                       type="button"
-                      onClick={() => setSelectedFood(food)}
+                      onClick={() => {
+                        setSelectedFood(food);
+                        setAmount(defaultAmountForFood(food));
+                      }}
                       className="w-full text-left p-3 hover:bg-med-offwhite rounded-xl border border-transparent hover:border-med-olive/20 transition-all flex justify-between items-center"
                     >
                       <div>
                         <p className="font-bold text-sm">{food.name}</p>
-                        <p className="text-xs text-slate-400">{food.calories} kcal / {Number(food.is_weight_based) === 1 ? '100g' : 'unid.'}</p>
+                        <p className="text-xs text-slate-400">{food.calories} kcal / {isWeightBasedFood(food) ? '100g' : 'unidad/ración'}</p>
                       </div>
                       <Plus size={16} className="text-med-olive" />
                     </button>
@@ -878,7 +926,7 @@ const Calendar = () => {
 
                 <div>
                   <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">
-                    Cantidad ({selectedFood.is_weight_based ? 'gramos' : 'unidades'})
+                    Cantidad ({isWeightBasedFood(selectedFood) ? 'gramos' : 'raciones'})
                   </label>
                   <input
                     autoFocus
@@ -1245,6 +1293,15 @@ const Calendar = () => {
                             <div className="flex-1">
                               <p className="text-sm font-bold text-med-slate">{item.name}</p>
                               <p className="text-xs text-slate-500 font-medium">{item.amount}{item.unit_label || 'g'}</p>
+                              {Array.isArray(item.recipe_ingredients) && item.recipe_ingredients.length > 0 && (
+                                <div className="mt-2 flex flex-wrap gap-1">
+                                  {item.recipe_ingredients.map((ingredient, index) => (
+                                    <span key={`${ingredient.food_id || ingredient.name}-${index}`} className="rounded-full bg-med-offwhite px-2 py-0.5 text-[10px] font-bold text-slate-500">
+                                      {ingredient.name} {Number(ingredient.amount).toFixed(Number(ingredient.amount) % 1 === 0 ? 0 : 1)}{ingredient.unit_label || ''}
+                                    </span>
+                                  ))}
+                                </div>
+                              )}
                             </div>
                             <div className="flex items-center gap-3">
                               <span className="text-base font-black text-med-slate">{item.calories.toFixed(0)} kcal</span>
@@ -1290,6 +1347,61 @@ const Calendar = () => {
           </div>
         )}
       </div>
+
+      {/* Modal para editar cantidad de alimento */}
+      {showEditModal && editingItem && (
+        <div className="fixed inset-0 z-[105] flex items-center justify-center p-4 bg-med-slate/60 backdrop-blur-sm">
+          <div className="bg-white rounded-3xl p-6 max-w-sm w-full shadow-2xl space-y-4">
+            <div className="flex justify-between items-center">
+              <h3 className="text-xl font-bold text-med-slate">Editar cantidad</h3>
+              <button onClick={() => { setShowEditModal(false); setApiError(null); }} className="text-slate-400 hover:text-red-500">
+                ×
+              </button>
+            </div>
+
+            {apiError && (
+              <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded-xl text-sm">
+                {apiError}
+              </div>
+            )}
+
+            <div className="bg-med-offwhite p-4 rounded-2xl">
+              <p className="text-xs font-bold text-slate-400 uppercase mb-1">Alimento</p>
+              <p className="font-bold text-med-slate">{editingItem.name}</p>
+            </div>
+
+            <div>
+              <label className="text-xs font-bold text-slate-400 uppercase mb-1 block">
+                Nueva cantidad ({editingItem.unit_label || 'g'})
+              </label>
+              <input
+                autoFocus
+                type="number"
+                value={editAmount}
+                onChange={(e) => setEditAmount(e.target.value)}
+                className="w-full p-4 bg-med-offwhite border-2 border-transparent focus:border-med-olive rounded-xl outline-none font-bold text-xl"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                type="button"
+                onClick={() => setShowEditModal(false)}
+                className="flex-1 py-4 bg-slate-100 text-slate-600 rounded-xl font-bold hover:bg-slate-200 transition-all"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => updateFoodAmount(editingItem)}
+                className="flex-[2] py-4 bg-med-blue text-white rounded-xl font-bold hover:bg-med-slate transition-all"
+              >
+                Guardar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       <AddFoodModal
         isOpen={showCreateFoodModal}
